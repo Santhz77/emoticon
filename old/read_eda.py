@@ -29,7 +29,7 @@ y_eda_value_microsiemens = []
 for j in range(0,len(y)):
     y_eda_value_microsiemens.append(int(1*1000/ (1- (y[j]/1023)))) 
 
-print(type(eda_value_microsiemens))
+print()
 
 
 

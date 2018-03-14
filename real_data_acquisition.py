@@ -53,13 +53,24 @@ def send_to_server(data_as_json):
     sock.close()
 
 
+def eda_process(eda):
+    # convert binary data to micro siemens
+    y_eda_value_microsiemens = []
+    for j in range(0, len(eda)):
+        y_eda_value_microsiemens.append(int(1 * 1000 / (1 - (eda[j] / 1023))))
+
+    return y_eda_value_microsiemens
+
+
+
+
 labels = ["'nSeq'", "'I1'", "'I2'", "'O1'", "'O2'", "'A1'", "'A2'", "'A3'", "'A4'", "'A5'", "'A6'"]
 
 # initial settings
 macAddress = '20:16:12:22:01:28'
 running_time = 30
 batteryThreshold = 30
-acqChannels = [1] # for A2 of bitalino
+acqChannels = [0,1] # for A2 of bitalino
 samplingRate = 1000 # 1k Hz.
 nSamples = 100 # Number of samples to extract
 digitalOutput = [1, 1] # just the output we perform (from machine to device )
@@ -107,6 +118,7 @@ time_elapsed = []
 
 ecg= []
 peakind = []
+eda = []
 
 # plotting
 fig = plt.figure(figsize=(8, 6), dpi=80, facecolor='w', edgecolor='k')
@@ -116,11 +128,27 @@ plt.xlabel('Time (seconds)')
 line1, = ax.plot(time_elapsed, ecg, 'b-') # raw data
 line2, = ax.plot(time_elapsed, ecg, 'r-') # to represent teh filtered data
 line3, = ax.plot(time_elapsed,peakind, 'g*')
+
+ax1 = fig.add_subplot(111)
+plt.ion()
+plt.xlabel('Time (seconds)')
+linex1, = ax1.plot(time_elapsed,eda, 'r-')
 fig.show()
 fig.canvas.draw()
 
+# fig1 = plt.figure(figsize=(8, 6), dpi=80, facecolor='w', edgecolor='k')
+# ax1 = fig1.add_subplot(111)
+# plt.ion()
+# linex1, = ax1.plot(time_elapsed,eda, 'y-')
+# fig1.show()
+# fig1.canvas.draw()
 
-data = []
+
+
+data_eda = []
+data_ecg = []
+
+
 
 try:
     #indefinite signal capture
@@ -129,22 +157,24 @@ try:
         # read data from the device
         received_data = device.read(nSamples)
 
-        data = np.concatenate((data,received_data[:,-1]),axis = 0)
+        eda_data = np.concatenate((data_eda,received_data[:,-2]),axis = 0)
+
+        ecg_data = np.concatenate((data_ecg,received_data[:,-1]),axis = 0)
 
         # we detrend the data
-        ecg = signal.detrend(data)
+        ecg = signal.detrend(data_ecg)
 
-        #ecg = data
+        eda_microSiemens = eda_process(eda_data)
 
-
+        print(eda_microSiemens)
 
         # #bandpass filtering the data
-        ecg_filtered = signal.filtfilt(ale, ble, ecg); # lowpass filter
-        ecg_filtered = signal.filtfilt(ahe, bhe, ecg_filtered); # high pass filter
+        # ecg_filtered = signal.filtfilt(ale, ble, ecg); # lowpass filter
+        # ecg_filtered = signal.filtfilt(ahe, bhe, ecg_filtered); # high pass filter
 
-        peakind = peakutils.indexes(ecg, thres=0.02 / max(ecg), min_dist=1)
-        peak_time = []
-        peak_val = []
+        # peakind = peakutils.indexes(ecg, thres=0.02 / max(ecg), min_dist=1)
+        # peak_time = []
+        # peak_val = []
 
 
 
@@ -165,16 +195,28 @@ try:
         # line3.set_xdata(peak_time[-szplot:])
 
         # update plot
-        line1.set_ydata(ecg[-szplot:]) # / max(ecg[-szplot:])
-        line1.set_xdata(time_elapsed[-szplot:])
+        # line1.set_ydata(ecg[-szplot:]) # / max(ecg[-szplot:])
+        # line1.set_xdata(time_elapsed[-szplot:])
+        line1.set_data(time_elapsed[-szplot:],ecg[-szplot:])
 
-        line2.set_ydata(ecg_filtered[-szplot:] ) #/ max(ecg_filtered[-szplot:]
-        line2.set_xdata(time_elapsed[-szplot:])
+        # line2.set_ydata(ecg_filtered[-szplot:] ) #/ max(ecg_filtered[-szplot:]
+        # line2.set_xdata(time_elapsed[-szplot:])
+
+        # print(len(time_elapsed[-szplot:]), len(eda_microSiemens[-szplot:]))
+
 
         ax.relim()
         ax.autoscale_view()
 
+
+        linex1.set_data(time_elapsed[-szplot:], eda_microSiemens[-szplot:])
+
+        ax1.relim()
+        ax1.autoscale_view()
+
+
         fig.canvas.draw()
+
         plt.draw()
 
 
@@ -183,7 +225,7 @@ try:
         data_as_json = "{ \"ecg\" : "
         data_as_json = data_as_json + tostring(ecg[-szplot:]) + '}'
         print(data_as_json)
-        send_to_server(data_as_json)
+        # send_to_server(data_as_json)
 
 
 except KeyboardInterrupt:

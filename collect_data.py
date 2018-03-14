@@ -30,7 +30,7 @@ labels = ["'nSeq'", "'I1'", "'I2'", "'O1'", "'O2'", "'A1'", "'A2'", "'A3'", "'A4
 macAddress = '20:16:12:22:01:28'
 running_time = 30
 batteryThreshold = 30
-acqChannels = [1] # 1 for A2
+acqChannels = [0,1] # 1 for A2 | 0 - A1
 samplingRate = 1000
 nSamples = 100
 digitalOutput =[1,1]
@@ -71,8 +71,6 @@ def send_to_server(data_as_json):
     #instanciate a socket
     sock = socket()
 
-    print(WEB_HOST_ADDRESS
-          ,WEB_PORT)
     #connect to the socket
     sock.connect((WEB_HOST_ADDRESS,int(WEB_PORT)))
 
@@ -101,7 +99,6 @@ def getpeak(ecg, time):
 def get_time_domain_features(ecg,peaklist,fs):
     RR_list = []
     cnt = 0
-    print(peaklist)
     while (cnt < (len(peaklist) - 1)):
         RR_interval = (peaklist[cnt + 1] - peaklist[cnt])  # Calculate distance between beats in # of samples
         s_dist = (RR_interval / fs)
@@ -111,6 +108,15 @@ def get_time_domain_features(ecg,peaklist,fs):
     hr = 60 / np.mean(RR_list)  * 0.1  # 60sec (1 minute) / average R-R interval of signal * our number of samples.
     return hr
 
+
+def eda_process(eda):
+    # convert binary data to micro siemens
+    y_eda_value_microsiemens = []
+    for j in range(0, len(eda)):
+        y_eda_value_microsiemens.append(int(1 * 1000 / (1 - (eda[j] / 1023))))
+
+    return y_eda_value_microsiemens
+
 def bitalino_data_collection():
     '''
     The core function of the file.
@@ -119,7 +125,7 @@ def bitalino_data_collection():
 
     Fs = float(int(samplingRate))
 
-    szplot = 500  # to show the plot (show for last)
+    szplot = 500  # to show the plot (show for last) # our window size!
 
     # Connect to BITalino
     device = BITalino(macAddress)
@@ -128,13 +134,10 @@ def bitalino_data_collection():
     # Set battery threshold
     device.battery(batteryThreshold)
 
-    # cols = numpy.arange(len(acqChannels) + 5)
 
     # Start Acquisition
     device.start(samplingRate, acqChannels)
 
-    # start = time.time()
-    # end = time.time()
 
     # time initialization
     timeend = 0.0
@@ -143,12 +146,14 @@ def bitalino_data_collection():
     time_elapsed = []
 
     ecg = []
-    peakind = []
+    eda = []
+    peakind = [] # for peak detection
 
     # plotting
     if(plot) :
         fig = plt.figure(figsize=(12, 8), dpi=80, facecolor='w', edgecolor='k')
         ax = fig.add_subplot(111)
+
         plt.ion()
         plt.xlabel('Time (seconds)')
         line1, = ax.plot(time_elapsed, ecg, 'b-' , alpha=0.3, label='RAW data')  # raw data
@@ -158,7 +163,18 @@ def bitalino_data_collection():
         fig.canvas.draw()
 
 
-    data = []
+        fig1 = plt.figure(figsize=(12, 8), dpi=80, facecolor='w', edgecolor='k')
+        ax_eda = fig1.add_subplot(111)
+        plt.ion()
+        plt.xlabel('Time (seconds)')
+        plt.ylabel('Conductance (microSiemens)')
+        line,  = ax_eda.plot(time_elapsed, eda, 'r-' , label='eda in microSiemens') # peaks
+        fig1.show()
+        fig1.canvas.draw()
+
+
+    ecg_data = []
+    eda_data = []
 
     try:
         # indefinite signal capture
@@ -166,10 +182,15 @@ def bitalino_data_collection():
             # read data from the device
             received_data = device.read(nSamples)
 
-            data = np.concatenate((data, received_data[:, -1]), axis=0)
+            ecg_data = np.concatenate((ecg_data, received_data[:, -1]), axis=0)
+            eda_data = np.concatenate((eda_data, received_data[:, -2]), axis=0)
 
-            # we detrend the data
-            ecg = signal.detrend(data)
+
+            # we detrend the data for heart rate
+            ecg = signal.detrend(ecg_data)
+
+            # we convert the data from binary to micro siemens.
+            eda = eda_process(eda_data)
 
 
             #bandpassfilter
@@ -203,22 +224,44 @@ def bitalino_data_collection():
                 line2.set_data(x, y_filtered)
                 line3.set_data(x_peaks,y_peaks)
 
+
                 ax.relim()
                 ax.autoscale_view()
                 fig.canvas.draw()
-                plt.legend(handles=[line1,line2,line3]) # to add the legend.
+                ax.legend(loc='upper right',handles=[line1,line2,line3]) # to add the legend.
+                plt.draw()
+
+                line.set_data(x, eda[-szplot:])
+                ax_eda.relim()
+                ax_eda.autoscale_view()
+                fig1.canvas.draw()
+                ax_eda.legend(loc='upper right',handles=[line])  # to add the legend.
                 plt.draw()
 
             # send data to server as a json
             # note we  send the last 500
-            #{ "ecg" : "[data]" }
+            #{ "ecg" : "[data]" ,
+            #   "fatures" = [hr,other],
+            #  "eda" = "[eda data]"
+            # }
             ##############################
             data_as_json = "{ \"ecg\" : "
-            data_as_json = data_as_json + tostring(y_filtered)
+            data_as_json = data_as_json + tostring(y_filtered) + ','
             data_as_json = data_as_json + " \"hr\" : " +  str(heart_rate) + '}'
-            # print(data_as_json)
-            print('--------------------')
+
+            # we initially send ecg data
             send_to_server(data_as_json)
+
+            # prep eda data
+            eda_data_as_json = "{ \"eda\" : "
+            eda_data_as_json = eda_data_as_json + tostring(eda[-szplot:]) + '}'
+
+            send_to_server(eda_data_as_json)
+
+            print('data sent to the web server...')
+
+
+
 
     except KeyboardInterrupt:
         print("Keyboard interupted")
