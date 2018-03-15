@@ -14,12 +14,14 @@ import peakutils
 import configparser
 import getopt
 import sys,os
+import math
 
 
 
 WEB_HOST_ADDRESS = ""
 WEB_PORT = 1234
-plot = False
+plot = True
+send_flag = False
 
 lowcut = 30
 highcut = 200
@@ -92,7 +94,7 @@ def getpeak(ecg, time):
     if(len(ecg) < 500):
         return [0]
     else:
-        indexes = peakutils.indexes(ecg, thres=0.8 , min_dist=10)
+        indexes = peakutils.indexes(ecg, thres=0.8 , min_dist=2)
         return indexes
 
 
@@ -125,7 +127,7 @@ def bitalino_data_collection():
 
     Fs = float(int(samplingRate))
 
-    szplot = 500  # to show the plot (show for last) # our window size!
+    szplot = 1000  # to show the plot (show for last) # our window size!
 
     # Connect to BITalino
     device = BITalino(macAddress)
@@ -148,6 +150,10 @@ def bitalino_data_collection():
     ecg = []
     eda = []
     peakind = [] # for peak detection
+    # peak_hamilton_arr = []
+    ecg_data = []
+    eda_data = []
+
 
     # plotting
     if(plot) :
@@ -156,9 +162,11 @@ def bitalino_data_collection():
 
         plt.ion()
         plt.xlabel('Time (seconds)')
-        line1, = ax.plot(time_elapsed, ecg, 'b-' , alpha=0.3, label='RAW data')  # raw data
+        line0, = ax.plot(time_elapsed, ecg_data, 'y-', label='RAW data')  # raw data
+        line1, = ax.plot(time_elapsed, ecg, 'b-' , alpha=0.3, label='detrended RAW data')  # raw data
         line2, = ax.plot(time_elapsed, ecg, 'g-', alpha=0.7 ,label='filtered data')  # to represent teh filtered data
         line3, = ax.plot(time_elapsed, ecg, 'ro' , label='detected peak') # peaks
+        # line4, = ax.plot(time_elapsed, ecg, 'm^', label='hamilton peak peak')  # peaks
         fig.show()
         fig.canvas.draw()
 
@@ -173,8 +181,7 @@ def bitalino_data_collection():
         fig1.canvas.draw()
 
 
-    ecg_data = []
-    eda_data = []
+
 
     try:
         # indefinite signal capture
@@ -211,24 +218,39 @@ def bitalino_data_collection():
             y_filtered = ecg_filtered[-szplot:]
 
             # we now find peaks for past 0.5 seconds ( R peak detection)
-            peakind = getpeak(y_filtered, x)
+            peakind = getpeak(y_filtered, x) # METHOD 1
+
+
+
+            # peak_hamilton_arr = np.concatenate((peak_hamilton_arr, rpeak_hamilton['rpeaks']), axis=0)
+
             #  some adjustments to plot the data
             x_peaks = [x[i] for i in peakind]  # peak time
-            y_peaks = [y_raw[i] for i in peakind]  # peak value
+            y_peaks = [y_filtered[i] for i in peakind]  # peak value
+
+            #------------------HAMILTON PEAKS--------------------------------
+            # x_peaks_hamilton = [x[i] for i in peak_hamilton['rpeaks']]  # peak time
+            # y_peaks_hamilton = [y_filtered[i] for i in peak_hamilton['rpeaks']]
 
             heart_rate = get_time_domain_features(y_filtered, peakind,Fs)
+            print(heart_rate)
+
+
+            if math.isnan(heart_rate):
+                heart_rate= 50
 
 
             if (plot):
+                line0.set_data(x, ecg_data[-szplot:])
                 line1.set_data(x,y_raw)
                 line2.set_data(x, y_filtered)
                 line3.set_data(x_peaks,y_peaks)
-
+                # line4.set_data(x_peaks_hamilton, y_peaks_hamilton)
 
                 ax.relim()
                 ax.autoscale_view()
                 fig.canvas.draw()
-                ax.legend(loc='upper right',handles=[line1,line2,line3]) # to add the legend.
+                ax.legend(loc='upper right',handles=[line0,line1,line2,line3]) # to add the legend.
                 plt.draw()
 
                 line.set_data(x, eda[-szplot:])
@@ -249,14 +271,17 @@ def bitalino_data_collection():
             data_as_json = data_as_json + tostring(y_filtered) + ','
             data_as_json = data_as_json + " \"hr\" : " +  str(heart_rate) + '}'
 
+
             # we initially send ecg data
-            send_to_server(data_as_json)
+            if send_flag:
+                send_to_server(data_as_json)
 
             # prep eda data
             eda_data_as_json = "{ \"eda\" : "
             eda_data_as_json = eda_data_as_json + tostring(eda[-szplot:]) + '}'
 
-            send_to_server(eda_data_as_json)
+            if send_flag:
+                send_to_server(eda_data_as_json)
 
             print('data sent to the web server...')
 
