@@ -13,8 +13,10 @@ Dependancies
     $ pip3 install matplotlib
     
     
-Contributing
-------------
-
-TBD
+Usage
+-----
+    $pyhton3 collect_data [OPTIONS] -c CONFIGFILE
+    
+    -c FILENAME, --configfile FILENAME    Use FILENAME for configuration
+    -h, --help                            Show help 
 
