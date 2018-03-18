@@ -8,6 +8,7 @@ import biosppy as bs # maybe not used!
 
 import scipy.io as sio
 from scipy import signal
+import scipy
 
 from socket import socket
 import peakutils
@@ -20,8 +21,8 @@ import math
 
 WEB_HOST_ADDRESS = ""
 WEB_PORT = 1234
-plot = True
-send_flag = False
+plot = False
+send_flag = True
 
 lowcut = 30
 highcut = 200
@@ -82,11 +83,17 @@ def send_to_server(data_as_json):
     # close the connection.
     sock.close()
 
-def butter_bandpass(lowcut, highcut, fs, order=5):
+def butter_bandpass(lowcut, highcut, fs, order=1):
     nyq = 0.5 * fs
     low = lowcut / nyq
     high = highcut / nyq
     b, a = signal.butter(order, [low, high], btype='band')
+    return b, a
+
+def butter_highpass(cutoff, fs, order=1):
+    nyq = 0.5 * fs
+    normal_cutoff = cutoff / nyq
+    b, a = signal.butter(order, normal_cutoff, btype='high', analog=False)
     return b, a
 
 def getpeak(ecg, time):
@@ -99,6 +106,13 @@ def getpeak(ecg, time):
 
 
 def get_time_domain_features(ecg,peaklist,fs):
+    '''
+
+    :param ecg: our filtered signal
+    :param peaklist: array of indexes which gives th peak
+    :param fs: sampling frequency
+    :return: ??
+    '''
     RR_list = []
     cnt = 0
     while (cnt < (len(peaklist) - 1)):
@@ -107,17 +121,33 @@ def get_time_domain_features(ecg,peaklist,fs):
         RR_list.append(s_dist)  # Append to list
         cnt += 1
 
-    hr = 60 / np.mean(RR_list)  * 0.1  # 60sec (1 minute) / average R-R interval of signal * our number of samples.
+    hr = 60 / np.mean(RR_list)  * 0.1  # 60sec (1 minute) / average R-R interval of signal * (new sample arrives).
+
+
     return hr
 
 
-def eda_process(eda):
-    # convert binary data to micro siemens
-    y_eda_value_microsiemens = []
-    for j in range(0, len(eda)):
-        y_eda_value_microsiemens.append(int(1 * 1000 / (1 - (eda[j] / 1023))))
+def eda_bin_to_microsiemens(eda):
+    '''
+    Vcc =  battery voltage = 3.7 V | Sensor_gain = 1100
+    RMOhm = 1 - EDAB / 2^n (sensor resistance in mega ohms)
+    EDAS = 1 / RMOhm (conductance in microsiemens)
+    Reference : http://forum.bitalino.com/viewtopic.php?f=12&t=128
 
-    return y_eda_value_microsiemens
+    :param eda: eda array
+    :return:
+    '''
+    # convert binary data to micro siemens
+    eda_value_microsiemens = []
+    for j in range(0, len(eda)):
+        r = 1 - (eda[j] / 1023)
+        eda_mSiemens = 1 / r
+        eda_value_microsiemens.append(eda_mSiemens)
+
+    return eda_value_microsiemens
+
+def eda_process(eda):
+    pass
 
 def bitalino_data_collection():
     '''
@@ -127,7 +157,7 @@ def bitalino_data_collection():
 
     Fs = float(int(samplingRate))
 
-    szplot = 1000  # to show the plot (show for last) # our window size!
+    szplot = 500  # to show the plot (show for last) # our window size!
 
     # Connect to BITalino
     device = BITalino(macAddress)
@@ -176,7 +206,8 @@ def bitalino_data_collection():
         plt.ion()
         plt.xlabel('Time (seconds)')
         plt.ylabel('Conductance (microSiemens)')
-        line,  = ax_eda.plot(time_elapsed, eda, 'r-' , label='eda in microSiemens') # peaks
+        line,  = ax_eda.plot(time_elapsed, eda, 'r-' , label='eda RAW') # peaks
+        lineeda1, = ax_eda.plot(time_elapsed, eda, 'b-', label=' eda filtered')  # peaks
         fig1.show()
         fig1.canvas.draw()
 
@@ -197,10 +228,14 @@ def bitalino_data_collection():
             ecg = signal.detrend(ecg_data)
 
             # we convert the data from binary to micro siemens.
-            eda = eda_process(eda_data)
+            eda_raw = eda_bin_to_microsiemens(eda_data)
+
+            # highpassfilter for EDA
+            ale,ble = butter_highpass(0.05, Fs) # high pass cutoff = 0.05 Hz
+            eda = signal.filtfilt(ale, ble, eda_raw);
 
 
-            #bandpassfilter
+            #bandpassfilter for ECG
             ale,ble = butter_bandpass(lowcut, highcut , Fs)
             ecg_filtered = signal.filtfilt(ale, ble, ecg);
 
@@ -233,7 +268,7 @@ def bitalino_data_collection():
             # y_peaks_hamilton = [y_filtered[i] for i in peak_hamilton['rpeaks']]
 
             heart_rate = get_time_domain_features(y_filtered, peakind,Fs)
-            print(heart_rate)
+
 
 
             if math.isnan(heart_rate):
@@ -253,17 +288,18 @@ def bitalino_data_collection():
                 ax.legend(loc='upper right',handles=[line0,line1,line2,line3]) # to add the legend.
                 plt.draw()
 
-                line.set_data(x, eda[-szplot:])
+                line.set_data(x, eda_raw[-szplot:])
+                lineeda1.set_data(x,eda[-szplot:])
                 ax_eda.relim()
                 ax_eda.autoscale_view()
                 fig1.canvas.draw()
-                ax_eda.legend(loc='upper right',handles=[line])  # to add the legend.
+                ax_eda.legend(loc='upper right',handles=[line,lineeda1])  # to add the legend.
                 plt.draw()
 
             # send data to server as a json
             # note we  send the last 500
             #{ "ecg" : "[data]" ,
-            #   "fatures" = [hr,other],
+            #   "fatures" = [hr,other?],
             #  "eda" = "[eda data]"
             # }
             ##############################
@@ -284,9 +320,6 @@ def bitalino_data_collection():
                 send_to_server(eda_data_as_json)
 
             print('data sent to the web server...')
-
-
-
 
     except KeyboardInterrupt:
         print("Keyboard interupted")
