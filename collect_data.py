@@ -1,5 +1,5 @@
 from local_bitalino import BITalino
-import time
+import time,datetime
 import numpy
 import numpy as np
 import matplotlib.pyplot as plt
@@ -23,6 +23,7 @@ WEB_HOST_ADDRESS = ""
 WEB_PORT = 1234
 plot = False
 send_flag = True
+save_raw_data = False
 
 lowcut = 30
 highcut = 200
@@ -146,8 +147,36 @@ def eda_bin_to_microsiemens(eda):
 
     return eda_value_microsiemens
 
+def ecg_bin_to_millivolts(ecg):
+    '''
+        Vcc =  battery voltage = 3.7 V | Sensor_gain = 1100
+        RMOhm = 1 - EDAB / 2^n (sensor resistance in mega ohms)
+        EDAS = 1 / RMOhm (conductance in microsiemens)
+        Reference : http://forum.bitalino.com/viewtopic.php?f=12&t=128
+
+        :param eda: eda array
+        :return:
+        '''
+
+    ecg_value_millivolts = []
+    for i in range(0, len(ecg)):
+        x = ecg[i]/1024 - (0.5) * 3.3
+        x = x/1100
+        x = x * 1000
+        ecg_value_millivolts.append(x)
+
+    return ecg_value_millivolts
+
+
 def eda_process(eda):
     pass
+
+
+def write_to_file(filename,raw_data):
+    with open(filename, 'ab') as f:
+        for line in raw_data:
+            a = numpy.array(line)
+            np.savetxt(f, a.reshape(1, a.shape[0]) , delimiter=', ' ,fmt="%5f")
 
 def bitalino_data_collection():
     '''
@@ -180,7 +209,7 @@ def bitalino_data_collection():
     ecg = []
     eda = []
     peakind = [] # for peak detection
-    # peak_hamilton_arr = []
+
     ecg_data = []
     eda_data = []
 
@@ -196,7 +225,6 @@ def bitalino_data_collection():
         line1, = ax.plot(time_elapsed, ecg, 'b-' , alpha=0.3, label='detrended RAW data')  # raw data
         line2, = ax.plot(time_elapsed, ecg, 'g-', alpha=0.7 ,label='filtered data')  # to represent teh filtered data
         line3, = ax.plot(time_elapsed, ecg, 'ro' , label='detected peak') # peaks
-        # line4, = ax.plot(time_elapsed, ecg, 'm^', label='hamilton peak peak')  # peaks
         fig.show()
         fig.canvas.draw()
 
@@ -212,7 +240,7 @@ def bitalino_data_collection():
         fig1.canvas.draw()
 
 
-
+    filename = 'raw_data/recording_'+ str(datetime.datetime.now()) + '.txt'
 
     try:
         # indefinite signal capture
@@ -220,15 +248,18 @@ def bitalino_data_collection():
             # read data from the device
             received_data = device.read(nSamples)
 
-            ecg_data = np.concatenate((ecg_data, received_data[:, -1]), axis=0)
-            eda_data = np.concatenate((eda_data, received_data[:, -2]), axis=0)
+            if(save_raw_data):
+                write_to_file(filename,received_data)
+
+            ecg_data = np.concatenate((ecg_data, ecg_bin_to_millivolts(received_data[:, -1])), axis=0)
+            eda_data = np.concatenate((eda_data, eda_bin_to_microsiemens(received_data[:, -2])), axis=0)
 
 
             # we detrend the data for heart rate
             ecg = signal.detrend(ecg_data)
 
             # we convert the data from binary to micro siemens.
-            eda_raw = eda_bin_to_microsiemens(eda_data)
+            eda_raw = eda_data
 
             # highpassfilter for EDA
             ale,ble = butter_highpass(0.05, Fs) # high pass cutoff = 0.05 Hz
@@ -256,23 +287,16 @@ def bitalino_data_collection():
             peakind = getpeak(y_filtered, x) # METHOD 1
 
 
-
-            # peak_hamilton_arr = np.concatenate((peak_hamilton_arr, rpeak_hamilton['rpeaks']), axis=0)
-
             #  some adjustments to plot the data
             x_peaks = [x[i] for i in peakind]  # peak time
             y_peaks = [y_filtered[i] for i in peakind]  # peak value
 
-            #------------------HAMILTON PEAKS--------------------------------
-            # x_peaks_hamilton = [x[i] for i in peak_hamilton['rpeaks']]  # peak time
-            # y_peaks_hamilton = [y_filtered[i] for i in peak_hamilton['rpeaks']]
 
             heart_rate = get_time_domain_features(y_filtered, peakind,Fs)
 
 
-
             if math.isnan(heart_rate):
-                heart_rate= 50
+                heart_rate= 40
 
 
             if (plot):
@@ -305,7 +329,7 @@ def bitalino_data_collection():
             ##############################
             data_as_json = "{ \"ecg\" : "
             data_as_json = data_as_json + tostring(y_filtered) + ','
-            data_as_json = data_as_json + " \"hr\" : " +  str(heart_rate) + '}'
+            data_as_json = data_as_json + " \"ecg_features\" : " +  str(heart_rate) + '}'
 
 
             # we initially send ecg data
