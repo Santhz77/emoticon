@@ -21,9 +21,9 @@ import math
 
 WEB_HOST_ADDRESS = ""
 WEB_PORT = 1234
-plot = False
+plot = True
 send_flag = True
-save_raw_data = False
+save_raw_data = True
 
 lowcut = 30
 highcut = 200
@@ -176,7 +176,7 @@ def write_to_file(filename,raw_data):
     with open(filename, 'ab') as f:
         for line in raw_data:
             a = numpy.array(line)
-            np.savetxt(f, a.reshape(1, a.shape[0]) , delimiter=', ' ,fmt="%5f")
+            np.savetxt(f, a.reshape(1, a.shape[0]) , delimiter=',' ,fmt="%5f")
 
 def bitalino_data_collection():
     '''
